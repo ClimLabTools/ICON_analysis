@@ -3,11 +3,9 @@ from shapely.geometry import mapping, Polygon
 import pyvista as pv
 import numpy as np
 import triangle
+from collections import defaultdict
 
 def shapely_to_pv_surface(poly: Polygon):
-    '''
-    Function to convert shapely polygon geometry to pv.Polygon object for clipping the unstructured mesh
-    '''
 
     poly = poly.buffer(0)
 
@@ -42,11 +40,35 @@ def shapely_to_pv_surface(poly: Polygon):
 
     return mesh
 
+def extract_ground_surface(mesh: pv.UnstructuredGrid, normal_threshold: float = -0.1, height_threshold: float = 0.95):
+    surface = mesh.extract_surface()
 
-def vtk_shp_clip(vtk, shp, vis=False):
+    surface.compute_normals(cell_normals=True, point_normals=False, inplace=True)
+
+    normals = surface['Normals']
+    down_mask = normals[:, 2] < normal_threshold
+
+    cell_centers = surface.cell_centers()
+    z_coords = cell_centers.points[:, 2]
+
+    z_min = z_coords.min()
+    z_max = z_coords.max()
+    max_z = z_min + height_threshold * (z_max - z_min)
+
+    elevation_mask = z_coords < max_z
+
+    final_mask = down_mask & elevation_mask
+
+    ground_surface = surface.extract_cells(np.where(final_mask)[0])
+
+    return ground_surface
+
+def vtk_shp_clip(vtk, shp, return_feature, vis=False, notebook=False, normal_threshold: float = -0.1, height_threshold: float = 0.95):
     '''
-    Function to clip a VTK shp file. Can be used to limit the energy flux slices to the glaciated area
+    :param return_feature: Either 'surface' or '3D' depending on whether you want the full 3D mesh-structure clipped
+                           or just the ground/surface mesh.
     '''
+
     polygon = shp.geometry.union_all()
 
     # Get pyvista surface for clipping
@@ -55,15 +77,26 @@ def vtk_shp_clip(vtk, shp, vis=False):
     # Add height information to the surface to generate intersection with the icon mesh
     z_min, z_max = vtk.bounds[4], vtk.bounds[5]
     height = z_max - z_min
-    extruded_surf = surf.extrude((0, 0, height * 1.1))
+    extruded_surf = surf.extrude((0, 0, height * 1.1), capping=True)
 
     # generate grid
     vtk_clip = vtk.clip_surface(extruded_surf, invert=True, progress_bar=True)
 
+    threeD = ["3D", "3d"]
+    twoD = ["surface", "Surface", "2D", "2d", "ground", "Ground"]
+    if return_feature not in threeD + twoD:
+        raise ValueError(f"Invalid argument: '{return_feature}'. Must be one of the elements in {threeD} or {twoD}.")
+    elif return_feature in twoD:
+        vtk_clip = extract_ground_surface(vtk_clip, normal_threshold = normal_threshold, height_threshold = height_threshold)
+
     # visualize if needed
     if vis:
-        plotter = pv.Plotter()
-        plotter.add_mesh(vtk_clip, color='lightblue', opacity=0.8, label='Clipped VTK')
+        if notebook:
+            plotter = pv.Plotter(notebook=True)
+        else:
+            plotter = pv.Plotter()
+        
+        plotter.add_mesh(vtk_clip, scalars=vtk_clip.array_names[0], cmap="viridis", opacity=0.8, label='Clipped VTK')
         plotter.add_mesh(surf, color='red', line_width=3, label='Clip Polygon')
         plotter.add_legend()
         plotter.add_axes()
@@ -78,7 +111,7 @@ def main():
     shp = gpd.read_file("../../Data/RGI2000-v7.0-G-11_central_europe.shp")
     HEF = shp[shp['glac_name'].str.contains("Hintereisferner", case=False, na=False)]
 
-    vtk_clip = vtk_shp_clip(vtk, HEF, vis=True)
+    vtk_clip = vtk_shp_clip(vtk, HEF, return_feature="2D", vis=True)
 
 
 if __name__ == "__main__":
