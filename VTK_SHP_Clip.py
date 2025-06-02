@@ -3,14 +3,19 @@ from shapely.geometry import mapping, Polygon
 import pyvista as pv
 import numpy as np
 import triangle
+from pyproj import Transformer
 from collections import defaultdict
 
-def shapely_to_pv_surface(poly: Polygon):
+def shapely_to_pv_surface(poly: Polygon, to_utm=True):
 
     poly = poly.buffer(0)
 
     coords = np.array(poly.exterior.coords[:-1])
     n_pts = len(coords)
+
+    if to_utm:
+        transformer = Transformer.from_crs("EPSG:4326", "epsg:32632", always_xy=True)
+        coords = np.array([transformer.transform(x, y) for x, y in coords])
 
     # rebuild vertices and edges of the polygon
     vertices = coords[:, :2]
