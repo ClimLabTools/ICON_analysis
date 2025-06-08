@@ -333,47 +333,51 @@ class icon_mesh():
 
 #---------------------------------------------------------------------------------
 #---------------------------------------------------------------------------------
-# --  define path, file and variable name
-finit = '/data/projects/hefex/output/v3/lbc_ic_51m/init_ML_20230820T000000Z.nc'
-fext = '/data/projects/hefex/output/v3/exp_R3B15_51m/external_parameter_icon_hef_DOM01_tiles.nc'
-fgrid = '/data/projects/hefex/input/grids/local/hef_51m_DOM07.nc'
-ficon = '/data/projects/hefex/output/v3/exp_R3B15_51m/LES_DOM01_ML_0012.nc'
 
-# Create mesh
-imesh = icon_mesh(fgrid, ficon, fext, nlayers=50)
-imesh.print_time()
-date_str = '20230824 12:05:00'
+def main():
 
-# Create orography file
-ptopo = imesh.create_topo()
+    # --  define path, file and variable name
+    finit = '/data/projects/hefex/output/v3/lbc_ic_51m/init_ML_20230820T000000Z.nc'
+    fext = '/data/projects/hefex/output/v3/exp_R3B15_51m/external_parameter_icon_hef_DOM01_tiles.nc'
+    fgrid = '/data/projects/hefex/input/grids/local/hef_51m_DOM07.nc'
+    ficon = '/data/projects/hefex/output/v3/exp_R3B15_51m/LES_DOM01_ML_0012.nc'
 
-# Add 2D variables
-imesh.add_tsk(date_str)
-imesh.add_t2m(date_str)
-imesh.add_ice(date_str)
-imesh.add_shfl(date_str)
-ptopo.save('icon_topo-51m_surface.vtk')
+    # Create mesh
+    imesh = icon_mesh(fgrid, ficon, fext, nlayers=50)
+    imesh.print_time()
+    date_str = '20230824 12:05:00'
 
-# Make a copy to avoid altering original
-#flat_mesh = ptopo.copy()
+    # Create orography file
+    ptopo = imesh.create_topo()
 
-# Set all Z coordinates to 0 to project onto XY plane
-#flat_mesh.points[:, 2] = 4000  # Project to z=0
-#flat_mesh.save('icon_topo-103m_flat.vtk')
+    # Add 2D variables
+    imesh.add_tsk(date_str)
+    imesh.add_t2m(date_str)
+    imesh.add_ice(date_str)
+    imesh.add_shfl(date_str)
+    ptopo.save('icon_topo-51m_surface.vtk')
 
+    # Make a copy to avoid altering original
+    #flat_mesh = ptopo.copy()
 
-# Create 3D mesh
-cmesh = imesh.create_grid()
-
-# Add variables
-#imesh.add_theta(date_str)
-#imesh.add_qv(date_str)
-#imesh.add_qc(date_str)
-#imesh.add_temp(date_str)
-#imesh.add_wind_vector(date_str)
-
-# Store mesh
-cmesh = imesh.get_mesh()
-cmesh.save('icon_mesh.vtk')
+    # Set all Z coordinates to 0 to project onto XY plane
+    #flat_mesh.points[:, 2] = 4000  # Project to z=0
+    #flat_mesh.save('icon_topo-103m_flat.vtk')
 
 
+    # Create 3D mesh
+    cmesh = imesh.create_grid()
+
+    # Add variables
+    #imesh.add_theta(date_str)
+    #imesh.add_qv(date_str)
+    #imesh.add_qc(date_str)
+    #imesh.add_temp(date_str)
+    #imesh.add_wind_vector(date_str)
+
+    # Store mesh
+    cmesh = imesh.get_mesh()
+    cmesh.save('icon_mesh.vtk')
+
+if __name__ == '__main__':
+    main()

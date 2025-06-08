@@ -101,7 +101,7 @@ def vtk_shp_clip(vtk, shp, return_feature, vis=False, notebook=False, normal_thr
         else:
             plotter = pv.Plotter()
         
-        plotter.add_mesh(vtk_clip, scalars=vtk_clip.array_names[0], cmap="viridis", opacity=0.8, label='Clipped VTK')
+        plotter.add_mesh(vtk_clip, scalars="temp", cmap="viridis", opacity=0.8, label='Clipped VTK')
         plotter.add_mesh(surf, color='red', line_width=3, label='Clip Polygon')
         plotter.add_legend()
         plotter.add_axes()
