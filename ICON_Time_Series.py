@@ -32,8 +32,7 @@ class ICON_TS:
     def generate_time_series(self, variable, polygon=None, plane="surface", value_limits=[-np.inf, np.inf],
                              save_as=None):
         '''
-        Adapted copy of the functionality of the main function from icon_vtk_slice.py. The advantage of turning it into
-        a method of the class is that mesh and time series are connected.
+        Adapted copy of the functionality of the main function from icon_vtk_slice.py.
 
         parameters:
         plane: Either "surface" or a height value"
