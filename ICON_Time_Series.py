@@ -130,21 +130,30 @@ class ICON_TS:
         self.cmesh = self.imesh.create_grid()
         self.timeseries = None
         self.plane = None
+        self.slice_mask = None
+        self.polygon_mask = None
+        self.mask = None
         end = time.time()
         print(f"Mesh Object Generated In {end - start} Seconds...")
 
-    def generate_time_series(self, variable, polygon=None, plane="surface", value_limits=[-np.inf, np.inf],
+    def generate_time_series(self, variable, polygon=None, plane_mode="surface", tolerance=20, value_limits=[-np.inf, np.inf],
                              save_as=None):
         '''
         Adapted copy of the functionality of the main function from icon_vtk_slice.py.
+
+        In order to increase performance for the plane at height x mode, not a slice is generated since one cannot
+        easily add variable values to the changed geometry of the slice. Instead, cells within the tolerance parameter
+        around height x are masked for the computation of the statistical values
 
         parameters:
         plane: Either "surface" or a height value"
 
         '''
 
-        if plane != "surface":
+        if plane_mode != "surface":
 
+            # Slicing before variable addition does not work as intended
+            '''
             origin = (0, 0, plane)
             normal = (0, 0, 1)
             plane_params = {
@@ -152,9 +161,28 @@ class ICON_TS:
                 "origin": origin,
             }
 
-            self.plane = self.imesh.mesh.slice(normal=normal, origin=origin)
+            self.plane = self.imesh.mesh.slice(normal=normal, origin=origin) 
+            '''
+
+            # instead create a mask at the height of the planar slice that preserves the original mesh geometry
+            z_coords = self.imesh.mesh.points[:, 2]
+            self.slice_mask = np.abs(z_coords - plane_mode) < tolerance
         else:
             self.plane = self.imesh.topo
+
+        if polygon is not None:
+            points_2d = self.imesh.mesh.points[:, :2]
+            self.polygon_mask = np.array([polygon.contains(Point(p)) for p in points_2d])
+
+            if plane_mode != "surface":
+                self.mask = np.logical_and(self.slice_mask, self.polygon_mask)
+            elif plane_mode == "surface":
+                self.mask = self.polygon_mask
+        else:
+            if plane_mode != "surface":
+                self.mask = self.slice_mask
+            else:
+                self.mask = None # not needed
 
 
         df = pd.DataFrame(columns=['date', 'mean', 'var', 'min', 'max'])
@@ -170,32 +198,31 @@ class ICON_TS:
                 dstr = t.strftime('%Y%m%dT%H:%M:%S')
                 if variable == 't_sk':
                     mesh = add_tsk(self.ptopo, ds_icon=ds_icon, date_str=dstr)
-                    mesh = self.plane.sample(mesh)
                 elif variable == 'theta':
                     mesh = add_theta(self.cmesh, ds_icon=ds_icon, ncells=ncells, nlayers=self.imesh.nlayers, date_str=dstr)
-                    mesh = self.plane.sample(mesh)
                 elif variable == 't_2m':
                     mesh = add_t2m(self.ptopo, ds_icon=ds_icon, date_str=dstr)
-                    mesh = self.plane.sample(mesh)
                 elif variable == 'shfl_s':
                     mesh = add_shfl(self.ptopo, ds_icon=ds_icon, date_str=dstr)
-                    mesh = self.plane.sample(mesh)
                 elif variable == "temp":
                     mesh = add_temp(self.cmesh, ds_icon=ds_icon, ncells=ncells, nlayers=self.imesh.nlayers, date_str=dstr)
-                    mesh = self.plane.sample(mesh)
                 else:
                     print("add-function for variable name not implemented")
                     return None
 
 
-                if polygon != None:
-                    points = mesh.points[:, :2]
-                    mask = np.array([polygon.contains(Point(p)) for p in points])
-
-                    subset = mesh.extract_points(mask)
-
+                if polygon is not None:
+                    if plane_mode == "surface":
+                        mesh = self.plane.sample(mesh)
+                    subset = mesh.extract_points(self.mask)
                 else:
-                    subset = mesh
+                    if plane_mode == "surface":
+                        subset = self.plane.sample(mesh)
+                    else:
+                        subset = mesh.extract_points(self.mask)
+
+                # Optionally, check for the structure of the subset
+                #subset.plot(scalars=variable)
 
                 if subset and variable in subset.cell_data:
                     values = subset.cell_data[variable]
@@ -228,11 +255,11 @@ def main():
     #TS1.cmesh.plot()
 
     # Test with surface temperature
-    df1 = TS1.generate_time_series(variable="t_sk", polygon=polygon, plane="surface", value_limits=[1, np.inf], save_as="../df_test_1.csv")
+    df1 = TS1.generate_time_series(variable="t_sk", polygon=polygon, plane_mode="surface", value_limits=[1, np.inf], save_as="../df_test_1.csv")
     print(df1)
 
     # Test with temperature at 2500 meters with polygon
-    df2 = TS1.generate_time_series(variable="temp", plane=2500, polygon=polygon, value_limits=[1, np.inf], save_as="../df_test_2.csv")
+    df2 = TS1.generate_time_series(variable="temp", plane_mode=2500, tolerance=20, polygon=polygon, value_limits=[1, np.inf], save_as="../df_test_2.csv")
     print(df2)
 
 
