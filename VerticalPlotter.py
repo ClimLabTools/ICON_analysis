@@ -13,8 +13,9 @@ import matplotlib.cm as cm
 
 
 # Further Steps
+    # Adapt height to the new icon2vtk
 
-        # Height Transformation - Currently not adapted for the new icon2vtk in meters instead of lat-long
+    # Add functionality for spline inputs
 
 
 class VerticalPlotter:
@@ -26,8 +27,9 @@ class VerticalPlotter:
     3. name of the variable to be plotted,
     4. maximum height of the transect as a list of [maximum array height, maximum plot height]
     '''
-    def __init__(self, icon_vtk, gdf_line, plot_variable, max_height, grid_width=1, interp_method='linear'):
-        self.icon_vtk = icon_vtk
+    def __init__(self, icon_vtk, epsg, gdf_line, plot_variable, max_height, grid_width=1, interp_method='linear'):
+        self.icon_vtk = icon_vtk.cell_data_to_point_data()
+        self.epsg = epsg
         self.grid_width = grid_width
         self.interp_method = interp_method
         self.plot_variable = plot_variable
@@ -79,37 +81,38 @@ class VerticalPlotter:
         Takes the gdf line and transforms it into a pv spline to be compatible with the pv.slice_along_line function
         :param n_points: Choose how many points the spline should have.
         '''
-        if self.gdf_line.crs != "EPSG:4326":
-            self.gdf_line = self.gdf_line.to_crs("EPSG:4326")
+        if self.gdf_line.crs != self.epsg:
+            self.gdf_line = self.gdf_line.to_crs(self.epsg)
+
+        print(f"Line length: {self.gdf_line.length}")
 
         coords = np.array(self.gdf_line.geometry.values[0].coords)
         coords = np.hstack([coords, np.zeros((coords.shape[0], 1))])
-        x_min, x_max = coords[0, 0], coords[-1, 0]
-        y_min, y_max = coords[0, 1], coords[-1, 1]
-        x = np.linspace(x_min, x_max, 1000)
-        y = np.linspace(y_min, y_max, 1000)
-        z_minmax = self.icon_vtk.bounds[4]
-        z = [z_minmax for _ in range(len(x))]
-        self.pv_line = pv.Spline(np.column_stack((x, y, z)), n_points)
+
+        self.pv_line = pv.Spline(coords, n_points)
 
     def generate_icon_slice(self):
         '''
         Generates a 2D vertical slice along the defined pv spline through the vtk.
         Note that the function always seems to extend the slice beyond the bounds of the spline until it reaches the boundaries of the vtk.
-        Thus, the slice result needs to be filered afterwards to contain only the relevant data.
+        Thus, the file result needs to be filtered to contain only the relevant data.
         '''
-        self.slice = self.icon_vtk.slice_along_line(self.pv_line, progress_bar=True)
 
-        all_points = self.slice.points
         x_bounds = (self.pv_line.points[:, 0].min(), self.pv_line.points[:, 0].max())
         y_bounds = (self.pv_line.points[:, 1].min(), self.pv_line.points[:, 1].max())
+        z_bounds = (self.icon_vtk.points[:, 2].min(), self.icon_vtk.points[:, 2].max())
+
+        all_points = self.icon_vtk.points
         mask = (
                 (all_points[:, 0] >= x_bounds[0]) & (all_points[:, 0] <= x_bounds[1]) &
-                (all_points[:, 1] >= y_bounds[0]) & (all_points[:, 1] <= y_bounds[1])
+                (all_points[:, 1] >= y_bounds[0]) & (all_points[:, 1] <= y_bounds[1]) &
+                (all_points[:, 2] >= z_bounds[0]) & (all_points[:, 2] <= z_bounds[1])
         )
 
-        self.slice = self.slice.extract_points(mask)
-        self.slice[self.plot_variable] = self.slice.get_array(self.plot_variable)
+        clipped_vtk = self.icon_vtk.extract_points(mask, include_cells=True)
+
+        self.slice = clipped_vtk.slice_along_line(self.pv_line, progress_bar=True)
+
 
     def interpolate_icon_slice(self):
         '''
@@ -123,18 +126,17 @@ class VerticalPlotter:
             sorted_points = self.slice.points[sorted_indices]
             x, y, z = sorted_points[:, 0], sorted_points[:, 1], sorted_points[:, 2]
 
-            transformer = Transformer.from_crs("EPSG:4326", "EPSG:32632", always_xy=True)
+            if self.epsg == "EPSG:4326":
+                transformer = Transformer.from_crs("EPSG:4326", "EPSG:32632", always_xy=True)
+                x, y = transformer.transform(x, y)
 
-            x, y = transformer.transform(x, y)
             x = np.array(x)
             y = np.array(y)
 
-            dx = x[-1] - x[0]
-            dy = y[-1] - y[0]
-            line_length = np.sqrt(dx ** 2 + dy ** 2)
-            t_x = dx / line_length
-            t_y = dy / line_length
-            lon = (x - x[0]) * t_x + (y - y[0]) * t_y
+            # Compute consecutive distances
+            dsts = np.sqrt((x[1:] - x[:-1]) ** 2 + (y[1:] - y[:-1]) ** 2)
+            line_length = np.sum(dsts)
+            lon = np.concatenate([[0], np.cumsum(dsts)])
 
             values = self.slice.get_array(self.plot_variable)[sorted_indices]
 
@@ -157,9 +159,10 @@ class VerticalPlotter:
             sorted_points = self.slice.points[sorted_indices]
             x, y, z = sorted_points[:, 0], sorted_points[:, 1], sorted_points[:, 2]
 
-            transformer = Transformer.from_crs("EPSG:4326", "EPSG:32632", always_xy=True)
+            if self.epsg == "EPSG:4326":
+                transformer = Transformer.from_crs("EPSG:4326", "EPSG:32632", always_xy=True)
+                x, y = transformer.transform(x, y)
 
-            x, y = transformer.transform(x, y)
             x = np.array(x)
             y = np.array(y)
 
@@ -219,9 +222,8 @@ class VerticalPlotter:
 
     def clip_result_array(self):
         '''
-        Used to filter for only the valid data points. Takes away the artifacts of the slice generation.
-        Note that in the testing the false points were always outside of the x-y bounding box of the spline.
-        The filtering is based on that fact. If this observation does not always apply, the filtering needs to be adapted.
+        Used to filter for only the valid data points. Takes away the artifacts of the slice generation. Sets terrain
+        and too high points to nan.
         '''
         lon_min, lon_max = self.lon.min(), self.lon.max()
         z_min, z_max = self.z.min(), self.z.max()
@@ -494,10 +496,6 @@ class VerticalPlotter:
         Creates a pyvista 3D visualization of the line and slice. Currently, it has some issues with the z-position due to rescaling to and from meters.
         '''
         vtk_copy = self.icon_vtk.copy()
-        points = vtk_copy.points.copy()
-        points[:,2] = self.icon_vtk.get_array("old_z_vals")
-        vtk_copy.points = points
-
         slice_copy = self.slice.copy()
         line_copy = self.pv_line.copy()
         line_points = line_copy.points.copy()
@@ -523,7 +521,7 @@ class VerticalPlotter:
         plotter.reset_camera()
         plotter.show()
 
-    def full_run(self, height_col_name='z_ifc', number_line_points=1000, autoplot=True, return_result=False, plot_3D=False,
+    def full_run(self, old_vtk=False, height_col_name='z_ifc', number_line_points=1000, autoplot=True, return_result=False, plot_3D=False,
                  plot_type='standard', nan_color="black",
                  cmap_name='viridis', label=None, discrete=True,
                  contour=True, bins=10, c_lines=10, c_color='black',
@@ -551,7 +549,8 @@ class VerticalPlotter:
         :return:
         '''
 
-        self.adadpt_z(col_new=height_col_name)
+        if old_vtk:
+            self.adadpt_z(col_new=height_col_name)
         self.gpd_line_2_pv_line(number_line_points)
         self.generate_icon_slice()
         self.interpolate_icon_slice()
@@ -571,24 +570,18 @@ class VerticalPlotter:
 
 def main():
 
-    icon_vtk = pv.read(r"C:\Users\MS\OneDrive\Arbeit_HU\Tasks\Data\HU_D\icon_data_40.vtk")
-    gdf_line_q = gpd.read_file(r"C:\Users\MS\OneDrive\Arbeit_HU\Tasks\2025_T01_2D_Vertical_Plot\T_Data\Querprofil.shp")
-    gdf_line_l = gpd.read_file(r"C:\Users\MS\OneDrive\Arbeit_HU\Tasks\2025_T01_2D_Vertical_Plot\T_Data\Laengsprofil.shp")
+    icon_vtk_1 = pv.read(r"..\Flowspline_Data\icon_mesh.vtk")
+    icon_vtk_2 = pv.read(r"..\Flowspline_Data\icon_mesh_theta_v.vtk")
+    gdf_line = gpd.read_file(r"..\Flowspline_Data\hef_flowline.shp")
 
-    # Querprofil
-    VP_q = VerticalPlotter(icon_vtk, gdf_line_q, 'theta', max_height=[4000, 3800], grid_width=1, interp_method='linear')
-    # Cheat cause of problem with z-direction of wind
-    VP_q.icon_vtk["wind"][:, 2] = VP_q.icon_vtk.get_array("w")
+    print(icon_vtk_2.array_names)
+    #print(icon_vtk.points[:5,:])
 
-    _ = VP_q.full_run(height_col_name='z_ifc', plot_type='standard', number_line_points=1000, save_as="querprofil")
+    VP_1 = VerticalPlotter(icon_vtk_1, "EPSG:32632", gdf_line, 'theta', max_height=[4000, 3800], grid_width=1, interp_method='linear')
+    _ = VP_1.full_run(plot_type='standard', number_line_points=1000, save_as="Theta_Spline", plot_3D=True)
 
-
-    # Laengsprofil
-    VP_l = VerticalPlotter(icon_vtk, gdf_line_l, 'theta', max_height=[4000, 3800], grid_width=1, interp_method='linear')
-    # Cheat cause of problem with z-direction of wind
-    VP_l.icon_vtk["wind"][:, 2] = VP_l.icon_vtk.get_array("w")
-
-    _ = VP_l.full_run(height_col_name='z_ifc', plot_type='standard', number_line_points=1000, save_as="laengsprofil")
+    VP_2 = VerticalPlotter(icon_vtk_2, "EPSG:32632", gdf_line, 'theta_v', max_height=[4000, 3800], grid_width=1, interp_method='linear')
+    _ = VP_2.full_run(plot_type='standard', number_line_points=1000, save_as="Theta_v_Spline", plot_3D=True)
 
 
 
