@@ -29,8 +29,8 @@ def add_theta(mesh, ncells, nlayers, ds_icon, date_str=None):
         _pres = ds_icon['pres'][idx, :, :].values
         for i in range(0, ncells, 1):
             for z in range(0, nlayers):
-                temp[(i * nlayers) + z] = _temp[(nlayers) - z, i]
-                pres[(i * nlayers) + z] = _pres[(nlayers) - z, i]
+                temp[(i * nlayers) + z] = _temp[len(ds_icon.height - nlayers) - z, i]
+                pres[(i * nlayers) + z] = _pres[len(ds_icon.height - nlayers) - z, i]
 
         mesh.cell_data['theta'] = metpy.calc.potential_temperature(pres * units.Pa,
                                                                         temp * units.kelvin).magnitude
@@ -47,7 +47,7 @@ def add_temp(mesh, ncells, nlayers, ds_icon, date_str=None):
         _temp = ds_icon['temp'][idx, :, :].values
         for i in range(0, ncells, 1):
             for z in range(0, nlayers):
-                temp[(i * nlayers) + z] = _temp[(nlayers - 1) - z, i]
+                temp[(i * nlayers) + z] = _temp[len(ds_icon.height - nlayers - 1) - z, i]
         mesh.cell_data['temp'] = temp
 
     return mesh

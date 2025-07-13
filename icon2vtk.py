@@ -122,8 +122,8 @@ class icon_mesh():
             _w = self.face_to_center('w',date_str)
             for i in range(0, self.ncells, 1):
                 for z in range(0, self.nlayers):
-                    self.u[(i * self.nlayers) + z] = _u[(self.nlayers - 1) - z, i]
-                    self.v[(i * self.nlayers) + z] = _v[(self.nlayers - 1) - z, i]
+                    self.u[(i * self.nlayers) + z] = _u[(len(self.ds_icon.height) - self.nlayers - 1) - z, i]
+                    self.v[(i * self.nlayers) + z] = _v[(len(self.ds_icon.height) - self.nlayers - 1) - z, i]
             self.mesh.cell_data['w'] = self.w
             self.mesh.cell_data['u'] = self.u
             self.mesh.cell_data['v'] = self.v
@@ -139,8 +139,8 @@ class icon_mesh():
             _pres = self.ds_icon['pres'][idx, :, :].values
             for i in range(0, self.ncells, 1):
                 for z in range(0, self.nlayers):
-                    self.temp[(i * self.nlayers) + z] = _temp[(self.nlayers) - z, i]
-                    self.pres[(i * self.nlayers) + z] = _pres[(self.nlayers) - z, i]
+                    self.temp[(i * self.nlayers) + z] = _temp[(len(self.ds_icon.height) - self.nlayers) - z, i]
+                    self.pres[(i * self.nlayers) + z] = _pres[(len(self.ds_icon.height) - self.nlayers) - z, i]
 
             self.mesh.cell_data['theta'] = metpy.calc.potential_temperature(self.pres * units.Pa,
                                                                             self.temp * units.kelvin).magnitude
@@ -155,7 +155,7 @@ class icon_mesh():
             _qv = self.ds_icon['qv'][idx, :, :].values
             for i in range(0, self.ncells, 1):
                 for z in range(0, self.nlayers):
-                    self.qv[(i * self.nlayers) + z] = _qv[(self.nlayers - 1) - z, i]
+                    self.qv[(i * self.nlayers) + z] = _qv[(len(self.ds_icon.height) - self.nlayers - 1) - z, i]
             self.mesh.cell_data['qv'] = self.qv
 
     def add_qc(self, date_str=None):
@@ -168,7 +168,7 @@ class icon_mesh():
             _qc = self.ds_icon['qc'][idx, :, :].values
             for i in range(0, self.ncells, 1):
                 for z in range(0, self.nlayers):
-                    self.qc[(i * self.nlayers) + z] = _qc[(self.nlayers - 1) - z, i]
+                    self.qc[(i * self.nlayers) + z] = _qc[(len(self.ds_icon.height) - self.nlayers - 1) - z, i]
             self.mesh.cell_data['qc'] = self.qc
 
     def add_temp(self, date_str=None):
@@ -181,7 +181,7 @@ class icon_mesh():
             _temp = self.ds_icon['temp'][idx, :, :].values
             for i in range(0, self.ncells, 1):
                 for z in range(0, self.nlayers):
-                    self.temp[(i * self.nlayers) + z] = _temp[(self.nlayers - 1) - z, i]
+                    self.temp[(i * self.nlayers) + z] = _temp[(len(self.ds_icon.height) - self.nlayers - 1) - z, i]
             self.mesh.cell_data['temp'] = self.temp
 
     def add_ice(self, date_str=None):
@@ -336,11 +336,13 @@ class icon_mesh():
 
 def main():
 
+    '''
     # --  define path, file and variable name
     finit = '/data/projects/hefex/output/v3/lbc_ic_51m/init_ML_20230820T000000Z.nc'
     fext = '/data/projects/hefex/output/v3/exp_R3B15_51m/external_parameter_icon_hef_DOM01_tiles.nc'
     fgrid = '/data/projects/hefex/input/grids/local/hef_51m_DOM07.nc'
     ficon = '/data/projects/hefex/output/v3/exp_R3B15_51m/LES_DOM01_ML_0012.nc'
+    '''
 
     # Create mesh
     imesh = icon_mesh(fgrid, ficon, fext, nlayers=50)
@@ -357,6 +359,7 @@ def main():
     imesh.add_shfl(date_str)
     ptopo.save('icon_topo-51m_surface.vtk')
 
+
     # Make a copy to avoid altering original
     #flat_mesh = ptopo.copy()
 
@@ -369,7 +372,7 @@ def main():
     cmesh = imesh.create_grid()
 
     # Add variables
-    #imesh.add_theta(date_str)
+    imesh.add_theta(date_str)
     #imesh.add_qv(date_str)
     #imesh.add_qc(date_str)
     #imesh.add_temp(date_str)
