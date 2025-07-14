@@ -139,8 +139,8 @@ class icon_mesh():
             _pres = self.ds_icon['pres'][idx, :, :].values
             for i in range(0, self.ncells, 1):
                 for z in range(0, self.nlayers):
-                    self.temp[(i * self.nlayers) + z] = _temp[(len(self.ds_icon.height) - self.nlayers) - z, i]
-                    self.pres[(i * self.nlayers) + z] = _pres[(len(self.ds_icon.height) - self.nlayers) - z, i]
+                    self.temp[(i * self.nlayers) + z] = _temp[(len(self.ds_icon.height) - self.nlayers - 1) - z, i]
+                    self.pres[(i * self.nlayers) + z] = _pres[(len(self.ds_icon.height) - self.nlayers - 1) - z, i]
 
             self.mesh.cell_data['theta'] = metpy.calc.potential_temperature(self.pres * units.Pa,
                                                                             self.temp * units.kelvin).magnitude
