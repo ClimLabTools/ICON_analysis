@@ -44,6 +44,7 @@ class icon_mesh():
         self.qv = np.ndarray([self.ncells * self.nlayers]).astype(float)
         self.qc = np.ndarray([self.ncells * self.nlayers]).astype(float)
         self.pres = np.ndarray([self.ncells * self.nlayers]).astype(float)
+        self.theta_v = np.ndarray([self.ncells * self.nlayers]).astype(float)
 
         # Auxiliary variable
         self.idx = 0
@@ -144,7 +145,20 @@ class icon_mesh():
 
             self.mesh.cell_data['theta'] = metpy.calc.potential_temperature(self.pres * units.Pa,
                                                                             self.temp * units.kelvin).magnitude
+    
+    def add_theta_v(self, date_str=None):
+        if date_str is None:
+            print("add_theta_v: Please provide a date")
+            pass
+        if isinstance(date_str,str):
+            idx = self._get_time(date_str)
+            _theta_v = self.ds_icon['theta_v'][idx, :, :].values
+            for i in range(0, self.ncells, 1):
+                for z in range(0, self.nlayers):
+                    self.theta_v[(i * self.nlayers) + z] = _theta_v[(len(self.ds_icon.height) - self.nlayers - 1) - z, i]
 
+            self.mesh.cell_data['theta_v'] = self.theta_v
+            
     def add_qv(self, date_str=None):
         if date_str is None:
             print("add_qv: Please provide a date")
@@ -373,6 +387,7 @@ def main():
 
     # Add variables
     imesh.add_theta(date_str)
+    #imesh.add_theta_v(date_str)
     #imesh.add_qv(date_str)
     #imesh.add_qc(date_str)
     #imesh.add_temp(date_str)
