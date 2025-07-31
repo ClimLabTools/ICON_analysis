@@ -14,6 +14,8 @@ import metpy
 from metpy import units
 from pyproj import Transformer
 from pyvista import CellType
+from joblib import Parallel, delayed
+
 
 ############### add-functions from the imesh-class ########################################
 
@@ -29,12 +31,13 @@ def add_theta(mesh, ncells, nlayers, ds_icon, date_str=None):
         _pres = ds_icon['pres'][idx, :, :].values
         for i in range(0, ncells, 1):
             for z in range(0, nlayers):
-                temp[(i * nlayers) + z] = _temp[len(ds_icon.height - nlayers - 1) - z, i]
-                pres[(i * nlayers) + z] = _pres[len(ds_icon.height - nlayers - 1) - z, i]
+                temp[(i * nlayers) + z] = _temp[(len(ds_icon.height) - nlayers - 1) - z, i]
+                pres[(i * nlayers) + z] = _pres[(len(ds_icon.height) - nlayers - 1) - z, i]
 
         mesh.cell_data['theta'] = metpy.calc.potential_temperature(pres * units.Pa,
-                                                                        temp * units.kelvin).magnitude
+                                                                   temp * units.kelvin).magnitude
         return mesh
+
 
 def add_temp(mesh, ncells, nlayers, ds_icon, date_str=None):
     if date_str is None:
@@ -47,41 +50,45 @@ def add_temp(mesh, ncells, nlayers, ds_icon, date_str=None):
         _temp = ds_icon['temp'][idx, :, :].values
         for i in range(0, ncells, 1):
             for z in range(0, nlayers):
-                temp[(i * nlayers) + z] = _temp[len(ds_icon.height - nlayers - 1) - z, i]
+                temp[(i * nlayers) + z] = _temp[(len(ds_icon.height) - nlayers - 1) - z, i]
         mesh.cell_data['temp'] = temp
 
     return mesh
+
 
 def add_tsk(mesh, ds_icon, date_str=None):
     if date_str is None:
         print("add_tsk: Please provide a date")
         pass
-    if isinstance(date_str,str):
+    if isinstance(date_str, str):
         idx = _get_time(date_str, ds_icon)
         mesh.cell_data['t_sk'] = ds_icon['t_sk'][idx, :].values
 
         return mesh
 
+
 def add_t2m(mesh, ds_icon, date_str=None):
     if date_str is None:
         print("add_tsk: Please provide a date")
         pass
-    if isinstance(date_str,str):
+    if isinstance(date_str, str):
         idx = _get_time(date_str, ds_icon)
         mesh.cell_data['t_2m'] = ds_icon['t_2m'][idx, 0, :].values
 
         return mesh
 
+
 def add_shfl(mesh, ds_icon, date_str=None):
     if date_str is None:
         print("add_tsk: Please provide a date")
         pass
-    if isinstance(date_str,str):
+    if isinstance(date_str, str):
         idx = _get_time(date_str, ds_icon)
         print(idx, ds_icon["shfl_s"].shape)
         mesh.cell_data['shfl_s'] = ds_icon['shfl_s'][idx, :].values
 
         return mesh
+
 
 def _parse_time(time_str):
     date_part = time_str.split('.')[0]
@@ -115,7 +122,61 @@ def _get_time(target_date_str, ds_icon):
     closest_index = np.argmin(time_diffs)
     return closest_index
 
+
 ###########################################################################################
+
+def process_file(ts_obj, filepath, variable, polygon=None, plane_mode="surface", tolerance=20,
+                 value_limits=[-np.inf, np.inf]):
+    df = pd.DataFrame(columns=['date', 'mean', 'var', 'min', 'max'])
+
+    ds_icon = xr.open_dataset(filepath)
+    ncells = ds_icon.ncells_2.shape[0]
+
+    time_strs = ds_icon['time'].values.astype(str)
+    times = np.array([_parse_time(time_str) for time_str in time_strs])
+
+    for t in times:
+        dstr = t.strftime('%Y%m%dT%H:%M:%S')
+        if variable == 't_sk':
+            mesh = add_tsk(ts_obj.ptopo, ds_icon=ds_icon, date_str=dstr)
+        elif variable == 'theta':
+            mesh = add_theta(ts_obj.cmesh, ds_icon=ds_icon, ncells=ncells, nlayers=ts_obj.imesh.nlayers,
+                             date_str=dstr)
+        elif variable == 't_2m':
+            mesh = add_t2m(ts_obj.ptopo, ds_icon=ds_icon, date_str=dstr)
+        elif variable == 'shfl_s':
+            mesh = add_shfl(ts_obj.ptopo, ds_icon=ds_icon, date_str=dstr)
+        elif variable == "temp":
+            mesh = add_temp(ts_obj.cmesh, ds_icon=ds_icon, ncells=ncells, nlayers=ts_obj.imesh.nlayers,
+                            date_str=dstr)
+        else:
+            print("add-function for variable name not implemented")
+            return None
+
+        if polygon is not None:
+            if plane_mode == "surface":
+                mesh = ts_obj.plane.sample(mesh)
+            subset = mesh.extract_points(ts_obj.mask)
+        else:
+            if plane_mode == "surface":
+                subset = ts_obj.plane.sample(mesh)
+            else:
+                subset = mesh.extract_points(ts_obj.mask)
+
+        # Optionally, check for the structure of the subset
+        # subset.plot(scalars=variable)
+
+        if subset and variable in subset.cell_data:
+            values = subset.cell_data[variable]
+            values = np.where((values > value_limits[0]) & (values < value_limits[1]), values, np.nan)
+            values = values[~np.isnan(values)]
+
+            df.loc[len(df)] = [dstr, np.mean(values), np.var(values), np.min(values), np.max(values)]
+
+    return df
+
+
+############################################################################################################
 
 class ICON_TS:
 
@@ -136,7 +197,8 @@ class ICON_TS:
         end = time.time()
         print(f"Mesh Object Generated In {end - start} Seconds...")
 
-    def generate_time_series(self, variable, polygon=None, plane_mode="surface", tolerance=20, value_limits=[-np.inf, np.inf],
+    def generate_time_series(self, variable, n_jobs=-1, polygon=None, plane_mode="surface", tolerance=20,
+                             value_limits=[-np.inf, np.inf],
                              save_as=None):
         '''
         Adapted copy of the functionality of the main function from icon_vtk_slice.py.
@@ -182,14 +244,13 @@ class ICON_TS:
             if plane_mode != "surface":
                 self.mask = self.slice_mask
             else:
-                self.mask = None # not needed
-
+                self.mask = None  # not needed
 
         df = pd.DataFrame(columns=['date', 'mean', 'var', 'min', 'max'])
 
         for filepath in tqdm(self.files):
             ds_icon = xr.open_dataset(filepath)
-            ncells = ds_icon.clon.shape[0]
+            ncells = ds_icon.ncells_2.shape[0]
 
             time_strs = ds_icon['time'].values.astype(str)
             times = np.array([_parse_time(time_str) for time_str in time_strs])
@@ -199,13 +260,15 @@ class ICON_TS:
                 if variable == 't_sk':
                     mesh = add_tsk(self.ptopo, ds_icon=ds_icon, date_str=dstr)
                 elif variable == 'theta':
-                    mesh = add_theta(self.cmesh, ds_icon=ds_icon, ncells=ncells, nlayers=self.imesh.nlayers, date_str=dstr)
+                    mesh = add_theta(self.cmesh, ds_icon=ds_icon, ncells=ncells, nlayers=self.imesh.nlayers,
+                                     date_str=dstr)
                 elif variable == 't_2m':
                     mesh = add_t2m(self.ptopo, ds_icon=ds_icon, date_str=dstr)
                 elif variable == 'shfl_s':
                     mesh = add_shfl(self.ptopo, ds_icon=ds_icon, date_str=dstr)
                 elif variable == "temp":
-                    mesh = add_temp(self.cmesh, ds_icon=ds_icon, ncells=ncells, nlayers=self.imesh.nlayers, date_str=dstr)
+                    mesh = add_temp(self.cmesh, ds_icon=ds_icon, ncells=ncells, nlayers=self.imesh.nlayers,
+                                    date_str=dstr)
                 else:
                     print("add-function for variable name not implemented")
                     return None
@@ -214,7 +277,9 @@ class ICON_TS:
                 if polygon is not None:
                     if plane_mode == "surface":
                         mesh = self.plane.sample(mesh)
+                        mesh.plot(scalars=variable)
                     subset = mesh.extract_points(self.mask)
+                    subset.plot()
                 else:
                     if plane_mode == "surface":
                         subset = self.plane.sample(mesh)
@@ -222,7 +287,7 @@ class ICON_TS:
                         subset = mesh.extract_points(self.mask)
 
                 # Optionally, check for the structure of the subset
-                #subset.plot(scalars=variable)
+                subset.plot(scalars=variable)
 
                 if subset and variable in subset.cell_data:
                     values = subset.cell_data[variable]
@@ -230,6 +295,9 @@ class ICON_TS:
                     values = values[~np.isnan(values)]
 
                     df.loc[len(df)] = [dstr, np.mean(values), np.var(values), np.min(values), np.max(values)]
+
+        # results_par = Parallel(n_jobs=n_jobs, backend="threading")(delayed(process_file)(self, f, variable=variable, polygon=polygon, plane_mode=plane_mode, tolerance=tolerance, value_limits=value_limits) for f in self.files)
+        # df = pd.concat(results_par, ignore_index=True)
 
         if save_as != None:
             df.to_csv(save_as)
@@ -239,7 +307,7 @@ class ICON_TS:
 
 def main():
     # set path to dir containing the ICON output files
-    filepaths = glob.glob(r"G:\NCs\*.nc")
+    filepaths = glob.glob(r"C:\Users\MS\OneDrive\Arbeit_HU\Tasks\Data\NCs\LES_51m_ml_0001.nc")
     print(filepaths)
 
     # Adapt paths to the location of the files with external parameters and grid
@@ -247,7 +315,9 @@ def main():
     fgrid = r"../../Data/hef_51m_DOM01.nc"
 
     # Set path to the polygon used to limit the grid (glacier shp or else)
-    gdf = gpd.read_file("../../Data/test.shp")
+    gdf = gpd.read_file(r"C:\Users\MS\OneDrive\Arbeit_HU\Tasks\2025_T05_Slice_Statistics\Shapes\Area_Outline.shp")
+    if gdf.crs != 32632:
+        gdf = gdf.to_crs(32632)
     polygon = gdf.geometry.union_all()  # merge multiple features if needed
 
     TS1 = ICON_TS(fgrid=fgrid, fext=fext, nlayers=50, filepaths=filepaths)
@@ -255,11 +325,13 @@ def main():
     #TS1.cmesh.plot()
 
     # Test with surface temperature
-    df1 = TS1.generate_time_series(variable="t_sk", polygon=polygon, plane_mode="surface", value_limits=[1, np.inf], save_as="../df_test_1.csv")
-    print(df1)
+    #df1 = TS1.generate_time_series(variable="t_sk", n_jobs=2, polygon=polygon, plane_mode="surface",
+    #                               value_limits=[1, np.inf], save_as="df_test_1_new.csv")
+    #print(df1)
 
     # Test with temperature at 2500 meters with polygon
-    df2 = TS1.generate_time_series(variable="temp", plane_mode=2500, tolerance=20, polygon=polygon, value_limits=[1, np.inf], save_as="../df_test_2.csv")
+    df2 = TS1.generate_time_series(variable="temp", plane_mode=2500, tolerance=20, polygon=polygon,
+                                   value_limits=[1, np.inf], save_as="df_test_2_new.csv")
     print(df2)
 
 
