@@ -103,12 +103,25 @@ class icon_mesh():
             pass
         if isinstance(date_str, str):
             idx = self._get_time(date_str)
-            _var = self.ds[_var][idx, :, :].values
-            _nvar = _var.copy()
+            _var = self.ds_icon[_var][idx, :, :].values
+            _nvar = np.zeros_like(_var, dtype=np.float64).flatten()[:-self.ncells]
+            L = len(self.ds_icon.height)
             for i in range(0, self.ncells, 1):
                 for z in range(1, self.nfaces):
-                    _nvar[(i * self.nlayers) + (z - 1)] = (_var[self.nlayers - z - 1, i] + _var[self.nlayers - z, i]) / 2
+                    _nvar[(i * self.nlayers) + (z - 1)] = (_var[L - z - 1, i] + _var[L - z, i]) / 2
+
         return _nvar
+
+    def add_w(self, date_str=None):
+        if date_str is None:
+            print("add_w: Please provide a date")
+            pass
+        if isinstance(date_str, str):
+            idx = self._get_time(date_str)
+            # Interpolate w to cell center
+            self.w = self.face_to_center('w',date_str)
+            self.mesh.cell_data['w'] = self.w
+            self.topo.cell_data['w'] = self.ds_icon['w'][idx, -1, :].values
 
     def add_wind_vector(self, date_str=None):
         if date_str is None:
@@ -117,18 +130,23 @@ class icon_mesh():
         if isinstance(date_str, str):
             idx = self._get_time(date_str)
             # Get u and v
-            _u = self.ds['u'][idx, :, :].values
-            _v = self.ds['v'][idx, :, :].values
+            _u = self.ds_icon['u'][idx, :, :].values
+            _v = self.ds_icon['v'][idx, :, :].values
             # Interpolate w to cell center
-            _w = self.face_to_center('w',date_str)
+            self.w = self.face_to_center('w',date_str)
+            L = len(self.ds_icon.height)
             for i in range(0, self.ncells, 1):
                 for z in range(0, self.nlayers):
-                    self.u[(i * self.nlayers) + z] = _u[(len(self.ds_icon.height) - self.nlayers - 1) - z, i]
-                    self.v[(i * self.nlayers) + z] = _v[(len(self.ds_icon.height) - self.nlayers - 1) - z, i]
+                    self.u[(i * self.nlayers) + z] = _u[(L - 1) - z, i]
+                    self.v[(i * self.nlayers) + z] = _v[(L - 1) - z, i]
             self.mesh.cell_data['w'] = self.w
             self.mesh.cell_data['u'] = self.u
             self.mesh.cell_data['v'] = self.v
             self.mesh.cell_data['wind'] = np.column_stack((self.u, self.v, self.w))
+
+            self.topo.cell_data['u'] = self.ds_icon['u'][idx, -1, :].values
+            self.topo.cell_data['v'] = self.ds_icon['v'][idx, -1, :].values
+            self.topo.cell_data['w'] = self.ds_icon['w'][idx, -1, :].values
 
     def add_theta(self, date_str=None):
         if date_str is None:
@@ -138,10 +156,11 @@ class icon_mesh():
             idx = self._get_time(date_str)
             _temp = self.ds_icon['temp'][idx, :, :].values
             _pres = self.ds_icon['pres'][idx, :, :].values
+            L = len(self.ds_icon.height)
             for i in range(0, self.ncells, 1):
                 for z in range(0, self.nlayers):
-                    self.temp[(i * self.nlayers) + z] = _temp[(len(self.ds_icon.height) - self.nlayers - 1) - z, i]
-                    self.pres[(i * self.nlayers) + z] = _pres[(len(self.ds_icon.height) - self.nlayers - 1) - z, i]
+                    self.temp[(i * self.nlayers) + z] = _temp[(L - 1) - z, i]
+                    self.pres[(i * self.nlayers) + z] = _pres[(L - 1) - z, i]
 
             self.mesh.cell_data['theta'] = metpy.calc.potential_temperature(self.pres * units.Pa,
                                                                             self.temp * units.kelvin).magnitude
@@ -153,11 +172,13 @@ class icon_mesh():
         if isinstance(date_str,str):
             idx = self._get_time(date_str)
             _theta_v = self.ds_icon['theta_v'][idx, :, :].values
+            L = len(self.ds_icon.height)
             for i in range(0, self.ncells, 1):
                 for z in range(0, self.nlayers):
-                    self.theta_v[(i * self.nlayers) + z] = _theta_v[(len(self.ds_icon.height) - self.nlayers - 1) - z, i]
+                    self.theta_v[(i * self.nlayers) + z] = _theta_v[(L - 1) - z, i]
 
             self.mesh.cell_data['theta_v'] = self.theta_v
+            self.topo.cell_data['theta_v'] = self.ds_icon['theta_v'][idx, -1, :].values
             
     def add_qv(self, date_str=None):
         if date_str is None:
@@ -167,10 +188,12 @@ class icon_mesh():
             idx = self._get_time(date_str)
             # Get u and v
             _qv = self.ds_icon['qv'][idx, :, :].values
+            L = len(self.ds_icon.height)
             for i in range(0, self.ncells, 1):
                 for z in range(0, self.nlayers):
-                    self.qv[(i * self.nlayers) + z] = _qv[(len(self.ds_icon.height) - self.nlayers - 1) - z, i]
+                    self.qv[(i * self.nlayers) + z] = _qv[(L - 1) - z, i]
             self.mesh.cell_data['qv'] = self.qv
+            self.topo.cell_data['qv'] = self.ds_icon['qv'][idx, -1, :].values
 
     def add_qc(self, date_str=None):
         if date_str is None:
@@ -180,10 +203,12 @@ class icon_mesh():
             idx = self._get_time(date_str)
             # Get u and v
             _qc = self.ds_icon['qc'][idx, :, :].values
+            L = len(self.ds_icon.height)
             for i in range(0, self.ncells, 1):
                 for z in range(0, self.nlayers):
-                    self.qc[(i * self.nlayers) + z] = _qc[(len(self.ds_icon.height) - self.nlayers - 1) - z, i]
+                    self.qc[(i * self.nlayers) + z] = _qc[(L - 1) - z, i]
             self.mesh.cell_data['qc'] = self.qc
+            self.topo.cell_data['qc'] = self.ds_icon['qc'][idx, -1, :].values
 
     def add_temp(self, date_str=None):
         if date_str is None:
@@ -193,10 +218,13 @@ class icon_mesh():
             idx = self._get_time(date_str)
             # Get u and v
             _temp = self.ds_icon['temp'][idx, :, :].values
+            L = len(self.ds_icon.height)
             for i in range(0, self.ncells, 1):
                 for z in range(0, self.nlayers):
-                    self.temp[(i * self.nlayers) + z] = _temp[(len(self.ds_icon.height) - self.nlayers - 1) - z, i]
+                    self.temp[(i * self.nlayers) + z] = _temp[(L - 1) - z, i]
             self.mesh.cell_data['temp'] = self.temp
+            self.topo.cell_data['temp'] = self.ds_icon['temp'][idx, -1, :].values
+
 
     def add_ice(self, date_str=None):
         if date_str is None:
@@ -221,6 +249,7 @@ class icon_mesh():
         if isinstance(date_str,str):
             idx = self._get_time(date_str)
             self.topo.cell_data['t_sk'] = self.ds_icon['t_sk'][idx, :].values
+
 
     def add_t2m(self, date_str=None):
         if date_str is None:
@@ -341,7 +370,6 @@ class icon_mesh():
         #         pmesh.points[i, 2] = pmesh.point_data['z_mc'][i]
 
         self.mesh = pmesh
-
         return self.mesh
 
 
@@ -358,10 +386,17 @@ def main():
     ficon = '/data/projects/hefex/output/v3/exp_R3B15_51m/LES_DOM01_ML_0012.nc'
     '''
 
+    ficon = r"G:\NCs\LES_51m_ml_0020.nc"
+    fext = r"../../Data/external_parameter_icon_hef_DOM01_tiles.nc"
+    fgrid = r"../../Data/hef_51m_DOM01.nc"
+
+    ds = xr.open_dataset(ficon)
+    print(ds["time"])
+
     # Create mesh
     imesh = icon_mesh(fgrid, ficon, fext, nlayers=50)
     imesh.print_time()
-    date_str = '20230824 12:05:00'
+    date_str = '2023081 17:00:00'
 
     # Create orography file
     ptopo = imesh.create_topo()
@@ -386,16 +421,16 @@ def main():
     cmesh = imesh.create_grid()
 
     # Add variables
-    imesh.add_theta(date_str)
+    #imesh.add_theta(date_str)
     #imesh.add_theta_v(date_str)
     #imesh.add_qv(date_str)
     #imesh.add_qc(date_str)
     #imesh.add_temp(date_str)
-    #imesh.add_wind_vector(date_str)
+    imesh.add_wind_vector(date_str)
 
     # Store mesh
     cmesh = imesh.get_mesh()
-    cmesh.save('icon_mesh.vtk')
+    cmesh.save('icon_mesh_test.vtk')
 
 if __name__ == '__main__':
     main()
