@@ -14,7 +14,270 @@ global differences
 differences = []
 
 
-def parse_fixed_width_line(line, expected_fields=200):
+def parse_line(line, expected_fields=200):
+    #### Options ####
+
+    if line.startswith("VR"):
+        header_match = re.match(r"^(VR\d{1,3})", line)
+        if not header_match:
+            raise ValueError("No valid header found")
+        header = header_match.group(1)
+
+        rest = line[len(header):]
+
+        fields = []
+        i = 0
+        while i < len(rest):
+            chunk = rest[i:i + 6]
+            j = 0
+
+            while i + 6 + j < len(rest) and not rest[i + 6 + j - 1].isspace() and not rest[i + 6 + j].isspace():
+                chunk += rest[i + 6 + j]
+                j += 1
+
+            if chunk.strip() == "":
+                fields.append(np.nan)
+            else:
+                try:
+                    numbers = re.findall(r"-?\d{1,3}\.\d{2}", chunk)
+                    for num in numbers:
+                        fields.append(float(num))
+                except ValueError:
+                    fields.append(np.nan)
+            i += 6 + j
+            j = 0
+    elif line.startswith("VVU"):
+        header = "VVU"
+
+        rest = line[len(header) + 0:]
+
+        fields = []
+        i = 0
+        while i < len(rest):
+            chunk = rest[i:i + 6]
+            j = 0
+
+            while i + 6 + j < len(rest) and not rest[i + 6 + j - 1].isspace() and not rest[i + 6 + j].isspace():
+                chunk += rest[i + 6 + j]
+                j += 1
+
+            if chunk.strip() == "":
+                fields.append(np.nan)
+            else:
+                try:
+                    numbers = re.findall(r"-?\d{1,3}\.\d{2}", chunk)
+                    for num in numbers:
+                        fields.append(float(num))
+                except ValueError:
+                    fields.append(np.nan)
+            i += 6 + j
+            j = 0
+    elif line.startswith("VVV"):
+        header = "VVV"
+
+        rest = line[len(header) + 0:]
+
+        fields = []
+        i = 0
+        while i < len(rest):
+            chunk = rest[i:i + 6]
+            j = 0
+
+            while i + 6 + j < len(rest) and not rest[i + 6 + j - 1].isspace() and not rest[i + 6 + j].isspace():
+                chunk += rest[i + 6 + j]
+                j += 1
+
+            if chunk.strip() == "":
+                fields.append(np.nan)
+            else:
+                try:
+                    numbers = re.findall(r"-?\d{1,3}\.\d{2}", chunk)
+                    for num in numbers:
+                        fields.append(float(num))
+                except ValueError:
+                    fields.append(np.nan)
+            i += 6 + j
+            j = 0
+    elif line.startswith("VVW"):
+        header = "VVW"
+
+        rest = line[len(header) + 0:]
+
+        fields = []
+        i = 0
+        while i < len(rest):
+            chunk = rest[i:i + 6]
+            j = 0
+
+            while i + 6 + j < len(rest) and not rest[i + 6 + j - 1].isspace() and not rest[i + 6 + j].isspace():
+                chunk += rest[i + 6 + j]
+                j += 1
+
+            if chunk.strip() == "":
+                fields.append(np.nan)
+            else:
+                try:
+                    numbers = re.findall(r"-?\d{1,3}\.\d{2}", chunk)
+                    for num in numbers:
+                        fields.append(float(num))
+                except ValueError:
+                    fields.append(np.nan)
+            i += 6 + j
+            j = 0
+    elif line.startswith("V "):
+        header = "V"
+
+        rest = line[len(header) + 2:]
+
+        fields = []
+        i = 0
+        while i < len(rest):
+            chunk = rest[i:i + 6]
+            j = 0
+
+            while i + 6 + j < len(rest) and not rest[i + 6 + j - 1].isspace() and not rest[i + 6 + j].isspace():
+                chunk += rest[i + 6 + j]
+                j += 1
+
+            if chunk.strip() == "":
+                fields.append(np.nan)
+            else:
+                try:
+                    numbers = re.findall(r"\d{1,3}\.\d{2}", chunk)
+                    for num in numbers:
+                        fields.append(float(num))
+                except ValueError:
+                    fields.append(np.nan)
+            i += 6 + j
+            j = 0
+    elif line.startswith("D"):
+        header = "D"
+
+        rest = line[len(header) + 3:]
+
+        fields = []
+        i = 0
+        while i < len(rest):
+            chunk = rest[i:i + 5]
+            if chunk.strip() == "":
+                fields.append(np.nan)
+            else:
+                try:
+                    fields.append(float(chunk))
+                except ValueError:
+                    fields.append(np.nan)
+            i += 6
+    elif line.startswith("S W"):
+        header = "S W"
+
+        rest = line[len(header) + 2:]
+
+        fields = []
+        i = 0
+        while i < len(rest):
+            chunk = rest[i:i + 4]
+            if chunk.strip() == "":
+                fields.append(np.nan)
+            else:
+                try:
+                    fields.append(float(chunk))
+                except ValueError:
+                    fields.append(np.nan)
+            i += 6
+    elif line.startswith("SN"):
+        header_match = re.match(r"^(SN\d{1,3})", line)
+        if not header_match:
+            raise ValueError("No valid header found")
+        header = header_match.group(1)
+
+        rest = line[len(header):]
+
+        fields = []
+        i = 0
+        while i < len(rest):
+            chunk = rest[i:i + 6]
+            j = 0
+
+            while i + 6 + j < len(rest) and not rest[i + 6 + j - 1].isspace() and not rest[i + 6 + j].isspace():
+                chunk += rest[i + 6 + j]
+                j += 1
+
+            if chunk.strip() == "":
+                fields.append(np.nan)
+            else:
+                try:
+                    if chunk.strip().lower() in {"inf", "+inf"}:
+                        fields.append(np.inf)
+                    elif chunk.strip().lower() == "-inf":
+                        fields.append(-np.inf)
+                    else:
+                        numbers = re.findall(r"-?\d{1,3}\.\d{1}", chunk)
+                        for num in numbers:
+                            fields.append(float(num))
+                except ValueError:
+                    fields.append(np.nan)
+            i += 6 + j
+            j = 0
+    elif line.startswith("ER"):
+        # Extract header (ER + 1–3 digits)
+        header_match = re.match(r"^(ER\d{1,3})", line)
+        if not header_match:
+            raise ValueError("No valid header found")
+        header = header_match.group(1)
+
+        rest = line[len(header):]
+
+        fields = []
+        for chunk in rest.split():
+            chunk = chunk.strip()
+            if chunk == "" or chunk == "0000" or chunk == "0":
+                fields.append(np.nan)
+            else:
+                try:
+                    fields.append(int(chunk))
+                except ValueError:
+                    fields.append(np.nan)
+
+    else:
+        counter[2] += 1
+
+        # Find start of data (first digit or 5 spaces after first space)
+        match = re.search(r'\s[-+]?\d| {5}', line)
+        if not match:
+            raise ValueError("No data start found in line.")
+
+        start_idx = match.start() + 1
+        header = line[:start_idx].strip()
+        rest = line[start_idx:]
+
+        # Regex to match either exactly 5 spaces (one NaN) or a float number
+        value_pattern = re.compile(r'( {5})|([-+]?\d+(?:\.\d{1,2})?)')
+        raw_matches = value_pattern.findall(rest)
+
+        fields = []
+        for space_match, num_match in raw_matches:
+            if space_match == '     ':
+                fields.append(np.nan)
+            elif num_match:
+                try:
+                    fields.append(float(num_match))
+                except ValueError:
+                    fields.append(np.nan)
+
+        # Ensure fixed number of fields
+        if len(fields) != expected_fields:
+            differences.append(len(fields) - expected_fields)
+        if len(fields) < expected_fields:
+            counter[0] += 1
+            fields += [np.nan] * (expected_fields - len(fields))
+        elif len(fields) > expected_fields:
+            counter[1] += 1
+            fields = fields[:expected_fields]
+
+    return header, fields
+
+
+def parse_line_old(line, expected_fields=200):
 
     counter[2] += 1
 
@@ -54,7 +317,7 @@ def parse_fixed_width_line(line, expected_fields=200):
     return header, fields
 
 
-def parse_lid_file(lid_path, exclude=(""), debug=False):
+def parse_lid_file(lid_path, exclude=(""), scale_height=1, debug=False):
     time_stamps = []
     heights = None
     records_per_time = []
@@ -89,7 +352,7 @@ def parse_lid_file(lid_path, exclude=(""), debug=False):
         else:
             if current_record is not None:
                 try:
-                    header, fields = parse_fixed_width_line(line)
+                    header, fields = parse_line(line)
                 except Exception as e:
                     if debug:
                         print(f"[DEBUG] Failed to parse line: {line} | Error: {e}")
@@ -97,7 +360,7 @@ def parse_lid_file(lid_path, exclude=(""), debug=False):
 
                 if len(fields) != 200:
                     if debug:
-                        print(f"[DEBUG] Skipping line with {len(fields)} fields (expected 200): {header}")
+                        print(f"[DEBUG] Skipping line with {len(fields)} fields (expected 200): {header} - {line}")
                     continue
                 current_record[header] = fields
 
@@ -136,20 +399,20 @@ def parse_lid_file(lid_path, exclude=(""), debug=False):
         data_vars=data_vars,
         coords={
             "time": times,
-            "height": heights * 18  # Apply scaling if needed
+            "height": heights * scale_height  # Apply scaling if needed
         }
     )
 
     return ds
 
 
-def lid2xr(dir_path, exclude=("R ", "VR", "VN", "ER"), debug=False):
+def lid2xr(dir_path, exclude=("R ", "VR", "VN", "ER"), scale_height=1, debug=False):
     paths = list(Path(dir_path).rglob('*.lid'))
 
     ds_list = []
     for p in tqdm(paths, desc="Parsing LID files"):
         try:
-            ds = parse_lid_file(p, exclude=exclude, debug=debug)
+            ds = parse_lid_file(p, exclude=exclude, scale_height=scale_height, debug=debug)
             if ds is not None:
                 ds_list.append(ds)
         except Exception as e:
@@ -164,7 +427,7 @@ def lid2xr(dir_path, exclude=("R ", "VR", "VN", "ER"), debug=False):
     return combined_ds
 
 
-def plot_lidar_heatmap(ds, variable, cmap="viridis", vmax=None):
+def plot_lidar_heatmap(ds, variable, save_as, cmap="viridis", vmax=None):
     time_nums = mdates.date2num(ds["time"].values)
 
     data = ds[variable].values.T
@@ -188,25 +451,42 @@ def plot_lidar_heatmap(ds, variable, cmap="viridis", vmax=None):
     fig.colorbar(im, label=variable)
 
     plt.tight_layout()
+    plt.savefig(save_as)
     plt.show()
 
 
 def main():
+    lid_pathSt = r"C:\Users\malte\OneDrive\Handy\Stare"
+    dsSt = lid2xr(lid_pathSt, exclude=("R "), scale_height=18, debug=True)
+    dsSt.to_netcdf(r"C:\Users\malte\OneDrive\Handy\lidar_data_Stare.nc")
 
-    # provide the VAD
-    lid_path = r"C:\Users\malte\OneDrive\Handy\VAD"
+    # provide the VAD path
+    lid_path35 = r"C:\Users\malte\OneDrive\Handy\VAD35"
+    ds35 = lid2xr(lid_path35, exclude=("R "), scale_height=10.3, debug=True)
+    ds35.to_netcdf(r"C:\Users\malte\OneDrive\Handy\lidar_data_VAD35.nc")
 
-    ds = lid2xr(lid_path, exclude=("R ", "VR", "VN", "ER", "S"), debug=True)
+    '''
+    plot_lidar_heatmap(ds35, "V", vmax=20, save_as="Velocity_Heatmap_35.png")
+    plot_lidar_heatmap(ds35, "D", cmap="twilight", vmax=None, save_as="Direction_Heatmap_35.png")
+    plot_lidar_heatmap(ds35, "SN1", vmax=None, save_as="SN1_Heatmap_35.png")
+    '''
+
+    lid_path70 = r"C:\Users\malte\OneDrive\Handy\VAD70"
+    ds70 = lid2xr(lid_path70, exclude=("R "), scale_height=16.9, debug=True)
+    ds70.to_netcdf(r"C:\Users\malte\OneDrive\Handy\lidar_data_VAD70.nc")
+
+    '''
+    plot_lidar_heatmap(ds70, "V", vmax=20, save_as="Velocity_Heatmap_70.png")
+    plot_lidar_heatmap(ds70, "D", cmap="twilight", vmax=None, save_as="Direction_Heatmap_70.png")
+    plot_lidar_heatmap(ds70, "SN1", vmax=None, save_as="SN1_Heatmap_70.png")
+    '''
+
+    dsSt = dsSt.assign_coords(type="Stare").expand_dims("type")
+    ds35 = ds35.assign_coords(type="VAD35").expand_dims("type")
+    ds70 = ds70.assign_coords(type="VAD70").expand_dims("type")
+
+    ds = xr.merge([ds35, ds70], compat="no_conflicts")
     ds.to_netcdf(r"C:\Users\malte\OneDrive\Handy\lidar_data.nc")
-
-    plot_lidar_heatmap(ds, "V", vmax=20)
-    plot_lidar_heatmap(ds, "D", cmap="twilight", vmax=None)
-    #plot_lidar_heatmap(ds, "SN1", vmax=None)
-
-    print(counter)
-    plt.hist(differences, bins=50, edgecolor="black")
-    plt.show()
-
 
 if __name__ == "__main__":
     main()
