@@ -5,7 +5,14 @@ import numpy as np
 import pandas as pd
 import re
 from pathlib import Path
+from itertools import islice
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from tempfile import mkdtemp
+import shutil, os
+
+from click import progressbar
 from tqdm import tqdm
+from joblib import Parallel, delayed
 
 global counter
 counter = [0, 0, 0]
@@ -317,115 +324,214 @@ def parse_line_old(line, expected_fields=200):
     return header, fields
 
 
-def parse_lid_file(lid_path, exclude=(""), scale_height=1, debug=False):
+def parse_lid_file(
+    lid_path,
+    exclude=("R", "VR", "VN", "ER"),   # fix: empty-string default was too broad
+    scale_height=1,
+    debug=False,
+):
     time_stamps = []
     heights = None
-    records_per_time = []
 
-    with open(lid_path, "r", encoding="latin1") as f:
-        lines = f.readlines()
+    # header -> list aligned with time steps; each element is either list[float] or None
+    variables = {}
+    seen_this_time = set()
+    current_time_active = False
 
-    current_time = None
-    current_record = None
+    def _finalize_time_step():
+        for h, seq in variables.items():
+            if h not in seen_this_time:
+                seq.append(None)
+        seen_this_time.clear()
 
-    for line in lines:
-        line = line.rstrip('\n')
-        if not line:
-            continue
+    # Stream lines; no whole-file read
+    with open(lid_path, "r", encoding="latin1", buffering=1024*1024) as f:
+        for raw in f:
+            line = raw.rstrip("\n")
+            if not line:
+                continue
 
-        if line.startswith("LID"):
-            parts = line.split()
-            try:
-                raw_time = parts[1]
-                time_str = f"20{raw_time[:2]}-{raw_time[2:4]}-{raw_time[4:6]} {raw_time[6:8]}:{raw_time[8:10]}:{raw_time[10:12]}"
-                current_time = time_str
-                time_stamps.append(current_time)
-                current_record = {}
-                records_per_time.append(current_record)
-            except Exception:
-                current_time = None
-                current_record = None
-        elif line.startswith("H "):
-            heights = np.array([float(v) for v in re.findall(r'[-+]?\d*\.\d+|[-+]?\d+', line[3:])])
-        elif line.startswith(exclude) or line[0].isdigit():
-            continue
-        else:
-            if current_record is not None:
+            if line.startswith("LID"):
+                if current_time_active:
+                    _finalize_time_step()
+                parts = line.split()
                 try:
-                    header, fields = parse_line(line)
+                    raw_time = parts[1]
+                    time_stamps.append(
+                        f"20{raw_time[:2]}-{raw_time[2:4]}-{raw_time[4:6]} "
+                        f"{raw_time[6:8]}:{raw_time[8:10]}:{raw_time[10:12]}"
+                    )
+                    current_time_active = True
+                except Exception:
+                    current_time_active = False
+                continue
+
+            if line.startswith("H "):
+                try:
+                    # much faster than regex loop
+                    heights = np.fromstring(line[3:], sep=" ", dtype=float)
                 except Exception as e:
                     if debug:
-                        print(f"[DEBUG] Failed to parse line: {line} | Error: {e}")
-                    continue
+                        print(f"[DEBUG] Failed to parse heights: {e}")
+                    heights = None
+                continue
 
-                if len(fields) != 200:
-                    if debug:
-                        print(f"[DEBUG] Skipping line with {len(fields)} fields (expected 200): {header} - {line}")
-                    continue
-                current_record[header] = fields
+            # Skip excluded prefixes or numeric-leading lines
+            if line.startswith(exclude) or line[0].isdigit():
+                continue
+            if not current_time_active:
+                continue
+
+            try:
+                header, fields = parse_line(line)  # your function
+            except Exception as e:
+                if debug:
+                    print(f"[DEBUG] Failed to parse line: {line} | Error: {e}")
+                continue
+
+            seq = variables.get(header)
+            if seq is None:
+                # backfill earlier times with None
+                variables[header] = seq = [None] * (len(time_stamps) - 1)
+            seq.append(fields)
+            seen_this_time.add(header)
+
+    if current_time_active:
+        _finalize_time_step()
 
     if heights is None or len(time_stamps) == 0:
         raise ValueError(f"Missing heights or timestamps in file {lid_path}")
 
-    # Collect all unique headers
-    all_headers = sorted({key for rec in records_per_time for key in rec.keys()})
-    variables = {header: [] for header in all_headers}
-
-    for rec in records_per_time:
-        for header in all_headers:
-            fields = rec.get(header, [np.nan] * 200)
-            if len(fields) != len(heights):
-                if debug:
-                    print(f"[DEBUG] Adjusting field length for '{header}' from {len(fields)} to {len(heights)}")
-                fields = fields[:len(heights)] + [np.nan] * (len(heights) - len(fields))
-            variables[header].append(fields)
-
-    # Convert times to datetime
     times = pd.to_datetime(time_stamps)
-
-    # Build xarray dataset
+    H = len(heights)
     data_vars = {}
-    for header, records in variables.items():
-        arr = np.array(records, dtype=float)
-
-        if arr.shape != (len(times), len(heights)):
-            if debug:
-                print(f"[DEBUG] Skipping variable '{header}': shape {arr.shape} != ({len(times)}, {len(heights)})")
-            continue
-
-        data_vars[header.strip()] = (("time", "height"), arr)
+    for header, seq in variables.items():
+        if len(seq) < len(times):
+            seq.extend([None] * (len(times) - len(seq)))
+        rows = []
+        for fields in seq:
+            if fields is None:
+                rows.append(np.full(H, np.nan, dtype=float))
+            else:
+                arr = np.asarray(fields, dtype=float)
+                if arr.size != H:
+                    if arr.size > H:
+                        arr = arr[:H]
+                    else:
+                        tmp = np.full(H, np.nan, dtype=float)
+                        tmp[:arr.size] = arr
+                        arr = tmp
+                rows.append(arr)
+        data = np.vstack(rows)
+        data_vars[header.strip()] = (("time", "height"), data)
 
     ds = xr.Dataset(
         data_vars=data_vars,
-        coords={
-            "time": times,
-            "height": heights * scale_height  # Apply scaling if needed
-        }
+        coords={"time": times, "height": heights * scale_height},
     )
-
     return ds
 
 
-def lid2xr(dir_path, exclude=("R ", "VR", "VN", "ER"), scale_height=1, debug=False):
-    paths = list(Path(dir_path).rglob('*.lid'))
+def _worker_parse_to_temp_zarr(idx, path, exclude, scale_height, dtype, chunks, tmp_root, debug):
+    try:
+        ds = parse_lid_file(path, exclude=exclude, scale_height=scale_height, debug=debug)
+        if dtype:
+            for v in ds.data_vars:
+                if np.issubdtype(ds[v].dtype, np.floating):
+                    ds[v] = ds[v].astype(dtype)
+        if chunks:
+            ds = ds.chunk(chunks if isinstance(chunks, dict) else {"time": chunks})  # requires dask
 
-    ds_list = []
-    for p in tqdm(paths, desc="Parsing LID files"):
-        try:
-            ds = parse_lid_file(p, exclude=exclude, scale_height=scale_height, debug=debug)
-            if ds is not None:
-                ds_list.append(ds)
-        except Exception as e:
-            if debug:
-                print(f"[DEBUG] Skipping {p.name}: {e}")
-            continue
+        tmp_dir = mkdtemp(prefix=f"lidpart_{idx:06d}_", dir=tmp_root)
+        tmp_store = os.path.join(tmp_dir, "part.zarr")
+        # ---- write each part as Zarr v2 ----
+        ds.to_zarr(tmp_store, mode="w", zarr_format=2)
+        return (idx, tmp_store, int(ds.sizes["time"]))
+    except Exception as e:
+        if debug:
+            print(f"[DEBUG] Worker failed on {Path(path).name}: {e}")
+        return (idx, "", -1)
 
-    if not ds_list:
-        raise ValueError("No valid datasets parsed from directory")
+def lid2xr_parallel_streaming(
+    dir_path,
+    out_zarr,
+    n_workers=None,
+    exclude=("R", "VR", "VN", "ER"),
+    scale_height=1.0,
+    dtype="float32",
+    chunks={"time": 4096},
+    encoding=None,            # compressor dict; applied on FIRST write only
+    buffer_factor=4,
+    debug=False,
+):
+    paths = sorted(Path(dir_path).rglob("*.lid"))
+    if not paths:
+        raise FileNotFoundError(f"No .lid files under {dir_path}")
 
-    combined_ds = xr.concat(ds_list, dim="time").sortby("time")
-    return combined_ds
+    out_zarr = str(out_zarr)
+    if Path(out_zarr).exists():
+        shutil.rmtree(out_zarr)
 
+    # avoid BLAS oversubscription
+    os.environ.setdefault("OMP_NUM_THREADS", "1")
+    os.environ.setdefault("MKL_NUM_THREADS", "1")
+    os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+    os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
+
+    tmp_root = mkdtemp(prefix="lid_tmproot_")
+    created = False
+    next_expected = 0
+    buffer = {}
+    max_buffer = max(4, (n_workers or 1) * buffer_factor)
+
+    with ProcessPoolExecutor(max_workers=n_workers) as ex:
+        futs = [
+            ex.submit(_worker_parse_to_temp_zarr, i, str(p), exclude, scale_height,
+                      dtype, chunks, tmp_root, debug)
+            for i, p in enumerate(paths)
+        ]
+
+        for fut in as_completed(futs):
+            idx, tmp_store, n_time = fut.result()
+            if n_time < 0:
+                continue
+            buffer[idx] = tmp_store
+
+            # flush in order; keep buffer bounded
+            while (next_expected in buffer) or (len(buffer) >= max_buffer):
+                if next_expected not in buffer:
+                    break
+
+                tmp_store = buffer.pop(next_expected)
+
+                if not created:
+                    # first piece defines schema / encoding
+                    ds0 = xr.open_zarr(tmp_store, consolidated=False, zarr_format=2)
+                    ds0.to_zarr(out_zarr, mode="w", encoding=encoding, zarr_format=2)
+                    del ds0
+                    created = True
+                else:
+                    # subsequent pieces: open and APPEND along time
+                    ds_part = xr.open_zarr(tmp_store, consolidated=False, zarr_format=2)
+                    ds_part.to_zarr(out_zarr, mode="a", append_dim="time")
+                    del ds_part
+
+                # remove temp store to free disk
+                shutil.rmtree(Path(tmp_store).parent, ignore_errors=True)
+                next_expected += 1
+
+    shutil.rmtree(tmp_root, ignore_errors=True)
+    if not created:
+        raise ValueError("No valid datasets parsed.")
+
+    # optional: consolidate metadata for faster later opens
+    try:
+        import zarr
+        zarr.consolidate_metadata(out_zarr)
+        return xr.open_zarr(out_zarr, consolidated=True, zarr_format=2)
+    except Exception:
+        # fall back if zarr not available
+        return xr.open_zarr(out_zarr, consolidated=False, zarr_format=2)
 
 def plot_lidar_heatmap(ds, variable, save_as, cmap="viridis", vmax=None):
     time_nums = mdates.date2num(ds["time"].values)
@@ -456,37 +562,19 @@ def plot_lidar_heatmap(ds, variable, save_as, cmap="viridis", vmax=None):
 
 
 def main():
-    lid_pathSt = r"C:\Users\malte\OneDrive\Handy\Stare"
-    dsSt = lid2xr(lid_pathSt, exclude=("R "), scale_height=18, debug=True)
-    dsSt.to_netcdf(r"C:\Users\malte\OneDrive\Handy\lidar_data_Stare.nc")
+    lid_pathSt = r"E:\HU_DATA\Streamline_conv\Userfile 3"
 
-    # provide the VAD path
-    lid_path35 = r"C:\Users\malte\OneDrive\Handy\VAD35"
-    ds35 = lid2xr(lid_path35, exclude=("R "), scale_height=10.3, debug=True)
-    ds35.to_netcdf(r"C:\Users\malte\OneDrive\Handy\lidar_data_VAD35.nc")
-
-    '''
-    plot_lidar_heatmap(ds35, "V", vmax=20, save_as="Velocity_Heatmap_35.png")
-    plot_lidar_heatmap(ds35, "D", cmap="twilight", vmax=None, save_as="Direction_Heatmap_35.png")
-    plot_lidar_heatmap(ds35, "SN1", vmax=None, save_as="SN1_Heatmap_35.png")
-    '''
-
-    lid_path70 = r"C:\Users\malte\OneDrive\Handy\VAD70"
-    ds70 = lid2xr(lid_path70, exclude=("R "), scale_height=16.9, debug=True)
-    ds70.to_netcdf(r"C:\Users\malte\OneDrive\Handy\lidar_data_VAD70.nc")
-
-    '''
-    plot_lidar_heatmap(ds70, "V", vmax=20, save_as="Velocity_Heatmap_70.png")
-    plot_lidar_heatmap(ds70, "D", cmap="twilight", vmax=None, save_as="Direction_Heatmap_70.png")
-    plot_lidar_heatmap(ds70, "SN1", vmax=None, save_as="SN1_Heatmap_70.png")
-    '''
-
-    dsSt = dsSt.assign_coords(type="Stare").expand_dims("type")
-    ds35 = ds35.assign_coords(type="VAD35").expand_dims("type")
-    ds70 = ds70.assign_coords(type="VAD70").expand_dims("type")
-
-    ds = xr.merge([ds35, ds70], compat="no_conflicts")
-    ds.to_netcdf(r"C:\Users\malte\OneDrive\Handy\lidar_data.nc")
+    ds = lid2xr_parallel_streaming(
+        dir_path=lid_pathSt,
+        out_zarr=r"E:\HU_DATA\Streamline_conv\user3.zarr",
+        n_workers=2,  # ~ number of physical cores
+        exclude=("R", "VR", "ER", "SN"), # "R", "VR", "VN", "ER", "SN"
+        scale_height=18,
+        dtype="float32",
+        chunks={"time": 4096},
+        debug=True,
+    )
 
 if __name__ == "__main__":
     main()
+
